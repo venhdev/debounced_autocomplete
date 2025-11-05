@@ -17,7 +17,7 @@ Add this package to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  debounced_autocomplete: ^0.0.1
+  debounced_autocomplete: ^1.1.0
 ```
 
 Then run:
@@ -114,6 +114,17 @@ DebouncedAutocomplete<City>(
     }
     return await debounceSearchCallback(textEditingValue.text) ?? [];
   },
+  // ... other parameters
+)
+```
+
+### Stop Search After Selection
+
+By default, after selecting an option, if the user types the same text again, the search won't trigger. You can change this behavior:
+
+```dart
+DebouncedAutocomplete<City>(
+  continueSearchOnSelectedOption: true, // Default is false
   // ... other parameters
 )
 ```

@@ -1,5 +1,26 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:debounced_autocomplete/src/debouncer.dart';
+import 'package:debounced_autocomplete/debounced_autocomplete.dart';
+
+// Helper class for testing DebouncedAutocomplete
+class TestOption extends DebAutocompleteValue {
+  final String value;
+  TestOption(this.value);
+
+  @override
+  String get displayValue => value;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TestOption &&
+          runtimeType == other.runtimeType &&
+          value == other.value;
+
+  @override
+  int get hashCode => value.hashCode;
+}
 
 void main() {
   group('DebounceTimer', () {
@@ -332,5 +353,213 @@ void main() {
       expect(result2, 'WORLD');
       expect(executionCount, 2);
     });
+  });
+
+  group('DebouncedAutocomplete - continueSearchOnSelectedOption', () {
+    testWidgets(
+      'stops search after selecting option when continueSearchOnSelectedOption is false',
+      (WidgetTester tester) async {
+        int searchCallCount = 0;
+        final options = [
+          TestOption('Apple'),
+          TestOption('Apricot'),
+          TestOption('Banana'),
+        ];
+
+        Future<List<TestOption>?> searchCallback(String input) async {
+          searchCallCount++;
+          await Future.delayed(const Duration(milliseconds: 10));
+          return options
+              .where(
+                (opt) => opt.value.toLowerCase().contains(input.toLowerCase()),
+              )
+              .toList();
+        }
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DebouncedAutocomplete<TestOption>(
+                continueSearchOnSelectedOption: false,
+                debounceController: DebounceController(
+                  duration: const Duration(milliseconds: 100),
+                ),
+                searchCallback: searchCallback,
+                optionsViewBuilder:
+                    (context, onSelected, options, selectedOption) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 4.0,
+                          child: SizedBox(
+                            height: 200,
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              shrinkWrap: true,
+                              itemCount: options.length,
+                              itemBuilder: (context, index) {
+                                final option = options.elementAt(index);
+                                return ListTile(
+                                  key: ValueKey(option.value),
+                                  title: Text(option.value),
+                                  onTap: () => onSelected(option),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                fieldViewBuilder:
+                    (
+                      context,
+                      controller,
+                      focusNode,
+                      onFieldSubmitted,
+                      isLoading,
+                    ) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                      );
+                    },
+              ),
+            ),
+          ),
+        );
+
+        // Enter text to trigger search
+        final textField = find.byType(TextField);
+        await tester.enterText(textField, 'App');
+
+        // Wait for debounce and search to complete
+        await tester.pump(const Duration(milliseconds: 150));
+        await tester.pumpAndSettle();
+
+        // Verify search was called
+        final initialSearchCount = searchCallCount;
+        expect(initialSearchCount, greaterThan(0));
+
+        // Verify at least one option is displayed
+        expect(find.text('Apple'), findsOneWidget);
+
+        // Select an option
+        final appleTile = find.text('Apple');
+        await tester.tap(appleTile);
+        await tester.pumpAndSettle();
+
+        // Reset search counter
+        searchCallCount = 0;
+
+        // Try to search again with the same selected text - this should NOT trigger search
+        await tester.enterText(textField, 'Apple');
+        await tester.pump(const Duration(milliseconds: 150));
+        await tester.pumpAndSettle();
+
+        // Verify search was NOT called (stopped because option is selected and text matches displayValue)
+        expect(searchCallCount, 0);
+      },
+    );
+
+    testWidgets(
+      'continues search after selecting option when continueSearchOnSelectedOption is true',
+      (WidgetTester tester) async {
+        int searchCallCount = 0;
+        final options = [
+          TestOption('Apple'),
+          TestOption('Apricot'),
+          TestOption('Banana'),
+        ];
+
+        Future<List<TestOption>?> searchCallback(String input) async {
+          searchCallCount++;
+          await Future.delayed(const Duration(milliseconds: 10));
+          return options
+              .where(
+                (opt) => opt.value.toLowerCase().contains(input.toLowerCase()),
+              )
+              .toList();
+        }
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DebouncedAutocomplete<TestOption>(
+                continueSearchOnSelectedOption: true,
+                debounceController: DebounceController(
+                  duration: const Duration(milliseconds: 100),
+                ),
+                searchCallback: searchCallback,
+                optionsViewBuilder:
+                    (context, onSelected, options, selectedOption) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 4.0,
+                          child: SizedBox(
+                            height: 200,
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              shrinkWrap: true,
+                              itemCount: options.length,
+                              itemBuilder: (context, index) {
+                                final option = options.elementAt(index);
+                                return ListTile(
+                                  key: ValueKey(option.value),
+                                  title: Text(option.value),
+                                  onTap: () => onSelected(option),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                fieldViewBuilder:
+                    (
+                      context,
+                      controller,
+                      focusNode,
+                      onFieldSubmitted,
+                      isLoading,
+                    ) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                      );
+                    },
+              ),
+            ),
+          ),
+        );
+
+        // Enter text to trigger search
+        final textField = find.byType(TextField);
+        await tester.enterText(textField, 'App');
+
+        // Wait for debounce and search to complete
+        await tester.pump(const Duration(milliseconds: 150));
+        await tester.pumpAndSettle();
+
+        // Verify at least one option is displayed
+        expect(find.text('Apple'), findsOneWidget);
+
+        // Select an option
+        final appleTile = find.text('Apple');
+        await tester.tap(appleTile);
+        await tester.pumpAndSettle();
+
+        // Reset search counter
+        searchCallCount = 0;
+
+        // Try to search again with the same selected text - this SHOULD trigger search
+        await tester.enterText(textField, 'Apple');
+        await tester.pump(const Duration(milliseconds: 150));
+        await tester.pumpAndSettle();
+
+        // Verify search WAS called (continues even though option is selected and text matches displayValue)
+        expect(searchCallCount, greaterThan(0));
+      },
+    );
   });
 }

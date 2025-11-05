@@ -1,6 +1,6 @@
 name: debounced_autocomplete
 description: A Flutter autocomplete widget built on top of RawAutocomplete with built-in debouncing to optimize API calls and reduce unnecessary requests while users type.
-version: 1.0.0
+version: 1.1.0
 homepage: https://github.com/venhdev/debounced_autocomplete
 repository: https://github.com/venhdev/debounced_autocomplete
 issue_tracker: https://github.com/venhdev/debounced_autocomplete/issues

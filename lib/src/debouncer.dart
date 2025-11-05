@@ -2,7 +2,10 @@ import 'dart:async' show FutureOr, Timer, Completer;
 
 typedef Debounceable<S extends Object?, T> = FutureOr<S> Function(T parameter);
 
-Debounceable<S, T> debounceFunction<S, T>(Debounceable<S, T> function, {required DebounceController controller}) {
+Debounceable<S, T> debounceFunction<S, T>(
+  Debounceable<S, T> function, {
+  required DebounceController controller,
+}) {
   DebounceTimer? timer;
 
   return (T parameter) async {
