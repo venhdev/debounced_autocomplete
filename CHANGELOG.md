@@ -1,3 +1,7 @@
-## 0.0.1
+## 1.0.0
 
-* TODO: Describe initial release.
+* Initial stable release
+* DebouncedAutocomplete widget built on RawAutocomplete with debouncing
+* DebounceController for timing and cancellation
+* Custom field and options view builders
+* Customizable debounce duration, loading management
