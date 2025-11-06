@@ -1,3 +1,7 @@
+## 1.2.1
+
+* Exported `Debounceable`, `DebounceController`, and `debounceFunction` from the main library for easier access
+
 ## 1.2.0
 
 * Changed `controller` parameter type from `SearchController?` to `TextEditingController?` for better compatibility with Flutter's standard text editing components
