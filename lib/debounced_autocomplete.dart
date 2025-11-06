@@ -1,18 +1,5 @@
 import 'dart:async' show FutureOr;
 
-import 'package:flutter/material.dart'
-    show
-        BuildContext,
-        Widget,
-        FocusNode,
-        SearchController,
-        VoidCallback,
-        TextEditingController,
-        TextEditingValue,
-        State,
-        debugPrint,
-        RawAutocomplete,
-        StatefulWidget;
 import 'package:flutter/widgets.dart';
 
 import 'src/debouncer.dart';
@@ -29,12 +16,7 @@ abstract class DebAutocompleteValue extends Object {
 ///
 ///   * [RawAutocomplete.optionsViewBuilder], which is supertype of this type.
 typedef DebAutocompleteOptionsViewBuilder<T extends Object> =
-    Widget Function(
-      BuildContext context,
-      void Function(T option) onSelected,
-      Iterable<T> options,
-      T? selectedOption,
-    );
+    Widget Function(BuildContext context, void Function(T option) onSelected, Iterable<T> options, T? selectedOption);
 
 /// The [DebAutocompleteOptionsBuilder] callback which computes the list of
 /// optional completions for the widget's field, based on the text the user has
@@ -64,8 +46,7 @@ typedef DebAutocompleteFieldViewBuilder =
       bool isLoading,
     );
 
-class DebouncedAutocomplete<T extends DebAutocompleteValue>
-    extends StatefulWidget {
+class DebouncedAutocomplete<T extends DebAutocompleteValue> extends StatefulWidget {
   const DebouncedAutocomplete({
     super.key,
     required this.searchCallback,
@@ -82,7 +63,7 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
   });
 
   final FocusNode? focusNode;
-  final SearchController? controller;
+  final TextEditingController? controller;
   final DebounceController? debounceController;
   final Future<List<T>?> Function(String input) searchCallback;
   final bool continueSearchOnSelectedOption;
@@ -95,12 +76,10 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
   final OptionsViewOpenDirection optionsViewOpenDirection;
 
   @override
-  State<DebouncedAutocomplete<T>> createState() =>
-      _DebouncedAutocompleteState<T>();
+  State<DebouncedAutocomplete<T>> createState() => _DebouncedAutocompleteState<T>();
 }
 
-class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
-    extends State<DebouncedAutocomplete<T>> {
+class _DebouncedAutocompleteState<T extends DebAutocompleteValue> extends State<DebouncedAutocomplete<T>> {
   late final Debounceable<List<T>?, String> _debounceSearchCallback;
   late final TextEditingController _textEditingController;
   late final FocusNode? _focusNode;
@@ -136,9 +115,7 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
     if (mounted) {
       setState(fn);
     } else {
-      debugPrint(
-        '[INF][DebouncedAutocomplete] setState called but widget is not mounted!',
-      );
+      debugPrint('[INF][DebouncedAutocomplete] setState called but widget is not mounted!');
     }
   }
 
@@ -147,8 +124,7 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
     super.initState();
     _focusNode = widget.focusNode ?? FocusNode();
     _textEditingController = widget.controller ?? TextEditingController();
-    _debounceSearchController =
-        widget.debounceController ?? DebounceController();
+    _debounceSearchController = widget.debounceController ?? DebounceController();
 
     _debounceSearchCallback = debounceFunction<List<T>?, String>(
       _debounceSearchCallbackImpl,
@@ -156,21 +132,15 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
     );
   }
 
-  FutureOr<Iterable<T>> _optionsBuilderImpl(
-    TextEditingValue textEditingValue,
-  ) async {
+  FutureOr<Iterable<T>> _optionsBuilderImpl(TextEditingValue textEditingValue) async {
     // stop search if the user has selected an option and continueSearchOnSelectedOption is false
-    if (!widget.continueSearchOnSelectedOption &&
-        textEditingValue.text == selectedOption?.displayValue) {
+    if (!widget.continueSearchOnSelectedOption && textEditingValue.text == selectedOption?.displayValue) {
       return Iterable<T>.empty();
     }
 
     // if optionsBuilder is provided, use it
     if (widget.optionsBuilder != null) {
-      final options = await widget.optionsBuilder!(
-        textEditingValue,
-        _debounceSearchCallback,
-      );
+      final options = await widget.optionsBuilder!(textEditingValue, _debounceSearchCallback);
       return options;
     } else {
       final options = await _debounceSearchCallback.call(textEditingValue.text);
@@ -191,17 +161,10 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
             }
           : (option) => setState(() => selectedOption = option),
       optionsBuilder: _optionsBuilderImpl,
-      optionsViewBuilder: (context, onSelected, options) => widget
-          .optionsViewBuilder(context, onSelected, options, selectedOption),
-      fieldViewBuilder:
-          (context, textEditingController, focusNode, onFieldSubmitted) =>
-              widget.fieldViewBuilder!(
-                context,
-                textEditingController,
-                focusNode,
-                onFieldSubmitted,
-                _isLoading,
-              ),
+      optionsViewBuilder: (context, onSelected, options) =>
+          widget.optionsViewBuilder(context, onSelected, options, selectedOption),
+      fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) =>
+          widget.fieldViewBuilder!(context, textEditingController, focusNode, onFieldSubmitted, _isLoading),
     );
   }
 }

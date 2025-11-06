@@ -1,3 +1,7 @@
+## 1.2.0
+
+* Changed `controller` parameter type from `SearchController?` to `TextEditingController?` for better compatibility with Flutter's standard text editing components
+
 ## 1.1.0
 
 * Added `continueSearchOnSelectedOption` parameter to control search behavior after option selection

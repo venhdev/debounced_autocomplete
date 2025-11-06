@@ -17,7 +17,7 @@ Add this package to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  debounced_autocomplete: ^1.1.0
+  debounced_autocomplete: ^1.2.0
 ```
 
 Then run:
