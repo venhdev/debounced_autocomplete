@@ -11,6 +11,17 @@ A Flutter autocomplete widget with built-in debouncing to optimize API calls and
 - **Type Safe**: Strongly typed with generic support
 - **Easy Integration**: Simple API that works with any data source
 
+## Demo
+
+The widget debounces user input and shows a loading indicator while a search is in-flight:
+
+```text
+[User types]  ->  [Wait debounce]  ->  [Search executes]  ->  [Dropdown shows results]
+              \->  [Spinner shown while search is in-flight]
+```
+
+*(Animated GIF coming soon.)*
+
 ## Getting started
 
 Add this package to your `pubspec.yaml`:
@@ -156,11 +167,25 @@ The `displayValue` is used by `RawAutocomplete` internally to:
 
 **Tip:** Format `displayValue` to be user-friendly as it appears in the text field after selection.
 
+## Roadmap
+
+- [ ] v1.3.0 — Resource leak fix, error logging, pubspec modernization
+- [ ] Future — In-flight request cancellation (track in-flight search by query)
+- [ ] Future — Configurable minimum query length
+- [ ] Future — Async suggestions (e.g., LLM-backed autocomplete)
+
 ## Additional information
 
 ### Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please:
+
+1. Open an issue first to discuss significant changes
+2. Fork the repository
+3. Create a feature branch (`git checkout -b feat/my-feature`)
+4. Write tests for new behavior
+5. Ensure `flutter analyze` and `flutter test` pass
+6. Open a Pull Request referencing the issue
 
 ### Issues
 

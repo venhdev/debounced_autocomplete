@@ -95,39 +95,33 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
   late final FocusNode? _focusNode;
 
   bool _isLoading = false;
-  void showLoading() => {if (mounted) setState(() => _isLoading = true)};
-  void hideLoading() => {if (mounted) setState(() => _isLoading = false)};
-  T? selectedOption;
+  T? _selectedOption;
+
+  void _showLoading() {
+    if (mounted) setState(() => _isLoading = true);
+  }
+
+  void _hideLoading() {
+    if (mounted) setState(() => _isLoading = false);
+  }
 
   late final DebounceController _debounceSearchController;
   Future<List<T>?> _debounceSearchCallbackImpl(String input) async {
     if (input.isEmpty) {
-      hideLoading();
+      _hideLoading();
       return null;
     }
 
-    showLoading();
-    final options = await widget
-        .searchCallback(input)
-        .catchError((error) {
-          hideLoading();
-          return null;
-        })
-        .then((data) {
-          hideLoading();
-          return data;
-        });
-
-    return options;
-  }
-
-  void setStateSafely(VoidCallback fn) {
-    if (mounted) {
-      setState(fn);
-    } else {
+    _showLoading();
+    try {
+      return await widget.searchCallback(input);
+    } catch (error, stack) {
       debugPrint(
-        '[INF][DebouncedAutocomplete] setState called but widget is not mounted!',
+        '[ERR][DebouncedAutocomplete] searchCallback("$input") failed: $error\n$stack',
       );
+      return null;
+    } finally {
+      _hideLoading();
     }
   }
 
@@ -150,7 +144,7 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
   ) async {
     // stop search if the user has selected an option and continueSearchOnSelectedOption is false
     if (!widget.continueSearchOnSelectedOption &&
-        textEditingValue.text == selectedOption?.displayValue) {
+        textEditingValue.text == _selectedOption?.displayValue) {
       return Iterable<T>.empty();
     }
 
@@ -175,13 +169,13 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
       textEditingController: _textEditingController,
       onSelected: widget.onSelected != null
           ? (option) {
-              setState(() => selectedOption = option);
+              setState(() => _selectedOption = option);
               widget.onSelected!(option);
             }
-          : (option) => setState(() => selectedOption = option),
+          : (option) => setState(() => _selectedOption = option),
       optionsBuilder: _optionsBuilderImpl,
       optionsViewBuilder: (context, onSelected, options) => widget
-          .optionsViewBuilder(context, onSelected, options, selectedOption),
+          .optionsViewBuilder(context, onSelected, options, _selectedOption),
       fieldViewBuilder:
           (context, textEditingController, focusNode, onFieldSubmitted) =>
               widget.fieldViewBuilder!(
@@ -192,5 +186,20 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
                 _isLoading,
               ),
     );
+  }
+
+  @override
+  void dispose() {
+    // Dispose only internally-created resources. User-provided ones are owned by the caller.
+    if (widget.controller == null) {
+      _textEditingController.dispose();
+    }
+    if (widget.focusNode == null) {
+      _focusNode?.dispose();
+    }
+    if (widget.debounceController == null) {
+      _debounceSearchController.dispose();
+    }
+    super.dispose();
   }
 }

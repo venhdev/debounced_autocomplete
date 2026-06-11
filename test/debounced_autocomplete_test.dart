@@ -562,4 +562,106 @@ void main() {
       },
     );
   });
+
+  group('DebouncedAutocomplete - disposal', () {
+    testWidgets('unmounts cleanly when internal controllers are used', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              searchCallback: (_) async => null,
+              debounceController: DebounceController(
+                duration: const Duration(milliseconds: 50),
+              ),
+              fieldViewBuilder:
+                  (ctx, controller, focusNode, onSubmit, isLoading) =>
+                      TextField(controller: controller, focusNode: focusNode),
+              optionsViewBuilder: (ctx, onSelected, options, selectedOption) =>
+                  const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      // Replace tree to trigger dispose on the DebouncedAutocomplete state
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('does not dispose user-provided controllers', (tester) async {
+      final controller = TextEditingController();
+      final focusNode = FocusNode();
+      final debounce = DebounceController();
+      addTearDown(() {
+        controller.dispose();
+        focusNode.dispose();
+        debounce.dispose();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              controller: controller,
+              focusNode: focusNode,
+              debounceController: debounce,
+              searchCallback: (_) async => null,
+              fieldViewBuilder: (ctx, c, fn, _, isLoading) =>
+                  TextField(controller: c, focusNode: fn),
+              optionsViewBuilder: (ctx, onSelected, options, selectedOption) =>
+                  const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      // Replace tree to trigger widget dispose
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      // The widget must NOT have disposed the user-provided controllers.
+      // The teardown above will dispose them, and a double-dispose would throw.
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('DebouncedAutocomplete - error handling', () {
+    testWidgets('logs error when searchCallback throws', (tester) async {
+      final logs = <String>[];
+      final original = debugPrint;
+      debugPrint = (msg, {wrapWidth}) => logs.add(msg.toString());
+      addTearDown(() => debugPrint = original);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              searchCallback: (_) async => throw Exception('boom'),
+              debounceController: DebounceController(
+                duration: const Duration(milliseconds: 50),
+              ),
+              fieldViewBuilder:
+                  (ctx, controller, focusNode, onSubmit, isLoading) =>
+                      TextField(controller: controller, focusNode: focusNode),
+              optionsViewBuilder: (ctx, onSelected, options, selectedOption) =>
+                  const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      await tester.enterText(find.byType(TextField), 'test');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      expect(logs, contains(predicate<String>((s) => s.contains('boom'))));
+
+      // Restore debugPrint inline so the framework's invariant check
+      // (`debugAssertAllFoundationVarsUnset`) does not flag the override.
+      debugPrint = original;
+    });
+  });
 }
