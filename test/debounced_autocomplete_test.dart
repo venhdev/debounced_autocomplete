@@ -625,6 +625,263 @@ void main() {
       // The teardown above will dispose them, and a double-dispose would throw.
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets(
+      'disposes internal TextEditingController and FocusNode even if caller adds them in a later rebuild',
+      (tester) async {
+        TextEditingController? capturedInternalController;
+        FocusNode? capturedInternalFocusNode;
+
+        Widget buildWidget({
+          TextEditingController? controller,
+          FocusNode? focusNode,
+        }) {
+          return MaterialApp(
+            home: Scaffold(
+              body: DebouncedAutocomplete<TestOption>(
+                controller: controller,
+                focusNode: focusNode,
+                searchCallback: (_) async => null,
+                debounceController: DebounceController(
+                  duration: const Duration(milliseconds: 50),
+                ),
+                fieldViewBuilder: (ctx, c, fn, _, isLoading) {
+                  // Only capture internal refs on the first build (no user-provided)
+                  if (controller == null) capturedInternalController = c;
+                  if (focusNode == null) capturedInternalFocusNode = fn;
+                  return TextField(controller: c, focusNode: fn);
+                },
+                optionsViewBuilder:
+                    (ctx, onSelected, options, selectedOption) =>
+                        const SizedBox.shrink(),
+              ),
+            ),
+          );
+        }
+
+        bool isDisposed(ChangeNotifier n) {
+          try {
+            void cb() {}
+            n.addListener(cb);
+            n.removeListener(cb);
+            return false;
+          } catch (_) {
+            return true;
+          }
+        }
+
+        // Pump 1: no user controllers — State must create internal ones.
+        await tester.pumpWidget(buildWidget());
+        expect(capturedInternalController, isNotNull);
+        expect(capturedInternalFocusNode, isNotNull);
+        final internalController = capturedInternalController!;
+        final internalFocusNode = capturedInternalFocusNode!;
+        expect(isDisposed(internalController), isFalse);
+        expect(isDisposed(internalFocusNode), isFalse);
+
+        // Pump 2: rebuild with user-provided controllers.
+        // After this rebuild, `widget.controller` is non-null at dispose time.
+        final userController = TextEditingController();
+        final userFocusNode = FocusNode();
+        addTearDown(() {
+          userController.dispose();
+          userFocusNode.dispose();
+        });
+        await tester.pumpWidget(buildWidget(
+          controller: userController,
+          focusNode: userFocusNode,
+        ));
+
+        // Pump 3: unmount the widget — triggers State.dispose.
+        await tester.pumpWidget(const SizedBox.shrink());
+
+        // The internal controllers must be disposed even though the final
+        // widget had user-provided ones (was a leak before the fix that
+        // checked `widget.controller == null` instead of init-time ownership).
+        expect(
+          isDisposed(internalController),
+          isTrue,
+          reason:
+              'internal TextEditingController leaked when caller added one later',
+        );
+        expect(
+          isDisposed(internalFocusNode),
+          isTrue,
+          reason: 'internal FocusNode leaked when caller added one later',
+        );
+
+        // And the user-provided controllers must not be double-disposed.
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('reacts to new focusNode passed in a later rebuild', (
+      tester,
+    ) async {
+      final fn1 = FocusNode();
+      final fn2 = FocusNode();
+      addTearDown(() {
+        fn1.dispose();
+        fn2.dispose();
+      });
+
+      Widget buildWidget(FocusNode? focusNode) {
+        return MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              focusNode: focusNode,
+              searchCallback: (_) async => null,
+              fieldViewBuilder: (ctx, c, fn, _, isLoading) =>
+                  TextField(controller: c, focusNode: fn),
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        );
+      }
+
+      // Pump 1: init with fn1.
+      await tester.pumpWidget(buildWidget(fn1));
+      var textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.focusNode, same(fn1));
+
+      // Pump 2: rebuild with fn2. State must reflect this — before the fix,
+      // didUpdateWidget was missing, so the State kept fn1 forever.
+      await tester.pumpWidget(buildWidget(fn2));
+      textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.focusNode, same(fn2));
+    });
+
+    testWidgets('reacts to new controller passed in a later rebuild', (
+      tester,
+    ) async {
+      final c1 = TextEditingController();
+      final c2 = TextEditingController();
+      addTearDown(() {
+        c1.dispose();
+        c2.dispose();
+      });
+
+      Widget buildWidget(TextEditingController? controller) {
+        return MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              controller: controller,
+              searchCallback: (_) async => null,
+              fieldViewBuilder: (ctx, c, fn, _, isLoading) =>
+                  TextField(controller: c, focusNode: fn),
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        );
+      }
+
+      // Pump 1: init with c1.
+      await tester.pumpWidget(buildWidget(c1));
+      var textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller, same(c1));
+
+      // Pump 2: rebuild with c2. State must reflect this.
+      await tester.pumpWidget(buildWidget(c2));
+      textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller, same(c2));
+    });
+
+    testWidgets('keeps previous options when debounce is cancelled', (
+      tester,
+    ) async {
+      Future<List<TestOption>?> searchCallback(String input) async {
+        // Simulate network delay.
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        if (input.isEmpty) return null;
+        return [TestOption('match-$input')];
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              searchCallback: searchCallback,
+              debounceController: DebounceController(
+                duration: const Duration(milliseconds: 50),
+              ),
+              fieldViewBuilder:
+                  (ctx, controller, focusNode, _, isLoading) =>
+                      TextField(controller: controller, focusNode: focusNode),
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) => Material(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: options
+                          .map((o) => ListTile(title: Text(o.value)))
+                          .toList(),
+                    ),
+                  ),
+            ),
+          ),
+        ),
+      );
+
+      final textField = find.byType(TextField);
+
+      // First search: type "App", wait for debounce + search to complete.
+      await tester.enterText(textField, 'App');
+      await tester.pump(const Duration(milliseconds: 70));
+      await tester.pumpAndSettle();
+      expect(find.text('match-App'), findsOneWidget);
+
+      // Second search: type "Ban" and immediately "Bana" before the first
+      // one can complete (50ms debounce). The call for "Ban" gets cancelled
+      // by the "Bana" call, so the debounce wrapper returns null.
+      await tester.enterText(textField, 'Ban');
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.enterText(textField, 'Bana');
+
+      // At this point, the call for "Ban" was cancelled and the call for
+      // "Bana" is still in the 50ms debounce window. Without SWR, the
+      // cancelled call would return Iterable<T>.empty() and RawAutocomplete
+      // would close the popup. With SWR, the cached "match-App" stays visible.
+      expect(
+        find.text('match-App'),
+        findsOneWidget,
+        reason:
+            'previous options should remain visible while the new debounce is pending',
+      );
+
+      // Let "Bana" search complete.
+      await tester.pump(const Duration(milliseconds: 70));
+      await tester.pumpAndSettle();
+      expect(find.text('match-Bana'), findsOneWidget);
+      expect(find.text('match-App'), findsNothing);
+    });
+
+    testWidgets('renders default TextField when fieldViewBuilder is not provided', (
+      tester,
+    ) async {
+      // Mount without supplying fieldViewBuilder. Before the fix, the
+      // build() method did `widget.fieldViewBuilder!(...)` which throws
+      // a null check operator error at runtime.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              searchCallback: (_) async => null,
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      // A default TextField should be present, and no exception should
+      // have been thrown.
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TextField), findsOneWidget);
+    });
   });
 
   group('DebouncedAutocomplete - error handling', () {

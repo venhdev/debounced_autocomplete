@@ -1,6 +1,6 @@
 import 'dart:async' show FutureOr;
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 import 'src/debouncer.dart';
 export 'src/debouncer.dart'
@@ -61,7 +61,7 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
     this.focusNode,
     this.controller,
     this.debounceController,
-    this.fieldViewBuilder,
+    this.fieldViewBuilder = _defaultFieldViewBuilder,
     required this.optionsViewBuilder,
     this.optionsBuilder,
     this.onSelected,
@@ -76,12 +76,39 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
   final Future<List<T>?> Function(String input) searchCallback;
   final bool continueSearchOnSelectedOption;
 
-  final DebAutocompleteFieldViewBuilder? fieldViewBuilder;
+  final DebAutocompleteFieldViewBuilder fieldViewBuilder;
   final DebAutocompleteOptionsViewBuilder<T> optionsViewBuilder;
   final DebAutocompleteOptionsBuilder<T>? optionsBuilder;
   final TextEditingValue? initialValue;
   final void Function(T)? onSelected;
   final OptionsViewOpenDirection optionsViewOpenDirection;
+
+  /// Default `fieldViewBuilder` used when the caller does not supply one.
+  /// Renders a basic `TextField` with a small loading indicator suffix
+  /// while a debounced search is in flight.
+  static Widget _defaultFieldViewBuilder(
+    BuildContext context,
+    TextEditingController textEditingController,
+    FocusNode focusNode,
+    VoidCallback onFieldSubmitted,
+    bool isLoading,
+  ) {
+    return TextField(
+      controller: textEditingController,
+      focusNode: focusNode,
+      decoration: isLoading
+          ? const InputDecoration(
+              suffixIcon: SizedBox(
+                width: 16,
+                height: 16,
+                child: Center(
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          : const InputDecoration(),
+    );
+  }
 
   @override
   State<DebouncedAutocomplete<T>> createState() =>
@@ -90,9 +117,12 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
 
 class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
     extends State<DebouncedAutocomplete<T>> {
-  late final Debounceable<List<T>?, String> _debounceSearchCallback;
-  late final TextEditingController _textEditingController;
-  late final FocusNode? _focusNode;
+  late Debounceable<List<T>?, String> _debounceSearchCallback;
+  late TextEditingController _textEditingController;
+  late FocusNode _focusNode;
+  late bool _ownsTextEditingController;
+  late bool _ownsFocusNode;
+  late bool _ownsDebounceController;
 
   bool _isLoading = false;
   T? _selectedOption;
@@ -105,7 +135,7 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
     if (mounted) setState(() => _isLoading = false);
   }
 
-  late final DebounceController _debounceSearchController;
+  late DebounceController _debounceSearchController;
   Future<List<T>?> _debounceSearchCallbackImpl(String input) async {
     if (input.isEmpty) {
       _hideLoading();
@@ -128,10 +158,15 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
   @override
   void initState() {
     super.initState();
-    _focusNode = widget.focusNode ?? FocusNode();
-    _textEditingController = widget.controller ?? TextEditingController();
-    _debounceSearchController =
-        widget.debounceController ?? DebounceController();
+    _ownsFocusNode = widget.focusNode == null;
+    _ownsTextEditingController = widget.controller == null;
+    _ownsDebounceController = widget.debounceController == null;
+    _focusNode = _ownsFocusNode ? FocusNode() : widget.focusNode!;
+    _textEditingController =
+        _ownsTextEditingController ? TextEditingController() : widget.controller!;
+    _debounceSearchController = _ownsDebounceController
+        ? DebounceController()
+        : widget.debounceController!;
 
     _debounceSearchCallback = debounceFunction<List<T>?, String>(
       _debounceSearchCallbackImpl,
@@ -178,7 +213,7 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
           .optionsViewBuilder(context, onSelected, options, _selectedOption),
       fieldViewBuilder:
           (context, textEditingController, focusNode, onFieldSubmitted) =>
-              widget.fieldViewBuilder!(
+              widget.fieldViewBuilder(
                 context,
                 textEditingController,
                 focusNode,
@@ -189,15 +224,55 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
   }
 
   @override
+  void didUpdateWidget(DebouncedAutocomplete<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (widget.focusNode != oldWidget.focusNode) {
+      if (_ownsFocusNode) {
+        _focusNode.dispose();
+      }
+      _ownsFocusNode = widget.focusNode == null;
+      _focusNode = _ownsFocusNode ? FocusNode() : widget.focusNode!;
+    }
+    if (widget.controller != oldWidget.controller) {
+      if (_ownsTextEditingController) {
+        _textEditingController.dispose();
+      }
+      _ownsTextEditingController = widget.controller == null;
+      _textEditingController = _ownsTextEditingController
+          ? TextEditingController()
+          : widget.controller!;
+    }
+    if (widget.debounceController != oldWidget.debounceController) {
+      if (_ownsDebounceController) {
+        _debounceSearchController.dispose();
+      }
+      _ownsDebounceController = widget.debounceController == null;
+      _debounceSearchController = _ownsDebounceController
+          ? DebounceController()
+          : widget.debounceController!;
+      // Rebuild the debounce wrapper so it uses the new controller.
+      _debounceSearchCallback = debounceFunction<List<T>?, String>(
+        _debounceSearchCallbackImpl,
+        controller: _debounceSearchController,
+      );
+    }
+  }
+
+  @override
   void dispose() {
-    // Dispose only internally-created resources. User-provided ones are owned by the caller.
-    if (widget.controller == null) {
+    // Dispose only resources that this State created internally.
+    // Ownership is decided at initState time, not by the final widget — the
+    // caller might switch from "no controller" to "user controller" mid-life,
+    // in which case `widget.controller` is non-null at dispose but we still
+    // own the original internal one and must release it.
+    if (_ownsTextEditingController) {
       _textEditingController.dispose();
     }
-    if (widget.focusNode == null) {
-      _focusNode?.dispose();
+    if (_ownsFocusNode) {
+      _focusNode.dispose();
     }
-    if (widget.debounceController == null) {
+    if (_ownsDebounceController) {
       _debounceSearchController.dispose();
     }
     super.dispose();
