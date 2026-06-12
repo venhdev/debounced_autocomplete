@@ -28,7 +28,7 @@ Add this package to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  debounced_autocomplete: ^1.2.1
+  debounced_autocomplete: ^1.3.1
 ```
 
 Then run:
@@ -169,7 +169,8 @@ The `displayValue` is used by `RawAutocomplete` internally to:
 
 ## Roadmap
 
-- [ ] v1.3.0 — Resource leak fix, error logging, pubspec modernization
+- [x] v1.3.0 — Resource leak fix, error logging, pubspec modernization
+- [x] v1.3.1 — `didUpdateWidget` reactivity, default `fieldViewBuilder`, robust dispose ownership
 - [ ] Future — In-flight request cancellation (track in-flight search by query)
 - [ ] Future — Configurable minimum query length
 - [ ] Future — Async suggestions (e.g., LLM-backed autocomplete)
