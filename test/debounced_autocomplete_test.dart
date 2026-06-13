@@ -790,9 +790,78 @@ void main() {
       expect(textField.controller, same(c2));
     });
 
+    testWidgets('renders default TextField when fieldViewBuilder is not provided', (
+      tester,
+    ) async {
+      // Mount without supplying fieldViewBuilder. Before the fix, the
+      // build() method did `widget.fieldViewBuilder!(...)` which throws
+      // a null check operator error at runtime.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              searchCallback: (_) async => null,
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      // A default TextField should be present, and no exception should
+      // have been thrown.
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TextField), findsOneWidget);
+    });
+
+    testWidgets(
+      'wires onFieldSubmitted in default fieldViewBuilder',
+      (tester) async {
+        // The default builder must wire RawAutocomplete's onFieldSubmitted
+        // to the TextField's onSubmitted, otherwise pressing Enter on the
+        // default field has no effect (regression from the parameter's
+        // stated purpose).
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DebouncedAutocomplete<TestOption>(
+                searchCallback: (_) async => null,
+                optionsViewBuilder:
+                    (ctx, onSelected, options, selectedOption) =>
+                        const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        );
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(
+          textField.onSubmitted,
+          isNotNull,
+          reason:
+              'default fieldViewBuilder should wire onFieldSubmitted to the TextField',
+        );
+      },
+    );
+  });
+
+  group('DebouncedAutocomplete - raw autocomplete interaction', () {
+    // Tests in this group exercise the interaction between
+    // DebouncedAutocomplete and the underlying RawAutocomplete from
+    // Flutter's material library. They document behavior that comes from
+    // RawAutocomplete, not from DebouncedAutocomplete's own logic.
+
     testWidgets('keeps previous options when debounce is cancelled', (
       tester,
     ) async {
+      // Regression guard: documents the interaction with RawAutocomplete's
+      // internal staleness check. When a debounce call is cancelled, the
+      // wrapper returns null and the optionsBuilder returns an empty
+      // iterable. RawAutocomplete's `_lastKnownTextEditingValueForOptions`
+      // then filters out the stale empty result, leaving the previous
+      // options visible. (The SWR lives in RawAutocomplete, not in
+      // DebouncedAutocomplete — no explicit caching is implemented here.)
       Future<List<TestOption>?> searchCallback(String input) async {
         // Simulate network delay.
         await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -840,10 +909,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
       await tester.enterText(textField, 'Bana');
 
-      // At this point, the call for "Ban" was cancelled and the call for
-      // "Bana" is still in the 50ms debounce window. Without SWR, the
-      // cancelled call would return Iterable<T>.empty() and RawAutocomplete
-      // would close the popup. With SWR, the cached "match-App" stays visible.
+      // The cancelled "Ban" call returns an empty iterable. RawAutocomplete
+      // checks that this empty result is for the latest text ("Bana") and
+      // discards it, leaving the "match-App" options visible.
       expect(
         find.text('match-App'),
         findsOneWidget,
@@ -856,31 +924,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('match-Bana'), findsOneWidget);
       expect(find.text('match-App'), findsNothing);
-    });
-
-    testWidgets('renders default TextField when fieldViewBuilder is not provided', (
-      tester,
-    ) async {
-      // Mount without supplying fieldViewBuilder. Before the fix, the
-      // build() method did `widget.fieldViewBuilder!(...)` which throws
-      // a null check operator error at runtime.
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: DebouncedAutocomplete<TestOption>(
-              searchCallback: (_) async => null,
-              optionsViewBuilder:
-                  (ctx, onSelected, options, selectedOption) =>
-                      const SizedBox.shrink(),
-            ),
-          ),
-        ),
-      );
-
-      // A default TextField should be present, and no exception should
-      // have been thrown.
-      expect(tester.takeException(), isNull);
-      expect(find.byType(TextField), findsOneWidget);
     });
   });
 

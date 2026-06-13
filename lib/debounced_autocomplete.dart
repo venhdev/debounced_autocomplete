@@ -84,7 +84,7 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
   final OptionsViewOpenDirection optionsViewOpenDirection;
 
   /// Default `fieldViewBuilder` used when the caller does not supply one.
-  /// Renders a basic `TextField` with a small loading indicator suffix
+  /// Renders a basic `TextField` with a loading indicator suffix
   /// while a debounced search is in flight.
   static Widget _defaultFieldViewBuilder(
     BuildContext context,
@@ -96,14 +96,12 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
     return TextField(
       controller: textEditingController,
       focusNode: focusNode,
+      onSubmitted: (_) => onFieldSubmitted(),
       decoration: isLoading
           ? const InputDecoration(
-              suffixIcon: SizedBox(
-                width: 16,
-                height: 16,
-                child: Center(
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
+              suffixIcon: Padding(
+                padding: EdgeInsets.all(12),
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
             )
           : const InputDecoration(),
@@ -227,36 +225,42 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
   void didUpdateWidget(DebouncedAutocomplete<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (widget.focusNode != oldWidget.focusNode) {
-      if (_ownsFocusNode) {
-        _focusNode.dispose();
-      }
-      _ownsFocusNode = widget.focusNode == null;
-      _focusNode = _ownsFocusNode ? FocusNode() : widget.focusNode!;
-    }
-    if (widget.controller != oldWidget.controller) {
-      if (_ownsTextEditingController) {
-        _textEditingController.dispose();
-      }
-      _ownsTextEditingController = widget.controller == null;
-      _textEditingController = _ownsTextEditingController
-          ? TextEditingController()
-          : widget.controller!;
-    }
-    if (widget.debounceController != oldWidget.debounceController) {
-      if (_ownsDebounceController) {
-        _debounceSearchController.dispose();
-      }
-      _ownsDebounceController = widget.debounceController == null;
-      _debounceSearchController = _ownsDebounceController
-          ? DebounceController()
-          : widget.debounceController!;
-      // Rebuild the debounce wrapper so it uses the new controller.
-      _debounceSearchCallback = debounceFunction<List<T>?, String>(
-        _debounceSearchCallbackImpl,
-        controller: _debounceSearchController,
-      );
-    }
+    _swapResource<FocusNode>(
+      newValue: widget.focusNode,
+      oldValue: oldWidget.focusNode,
+      wasOwned: () => _ownsFocusNode,
+      disposeCurrent: () => _focusNode.dispose(),
+      create: FocusNode.new,
+      setInternal: (v) => _focusNode = v,
+      setOwned: (v) => _ownsFocusNode = v,
+    );
+    _swapResource<TextEditingController>(
+      newValue: widget.controller,
+      oldValue: oldWidget.controller,
+      wasOwned: () => _ownsTextEditingController,
+      disposeCurrent: () => _textEditingController.dispose(),
+      create: TextEditingController.new,
+      setInternal: (v) => _textEditingController = v,
+      setOwned: (v) => _ownsTextEditingController = v,
+    );
+    _swapResource<DebounceController>(
+      newValue: widget.debounceController,
+      oldValue: oldWidget.debounceController,
+      wasOwned: () => _ownsDebounceController,
+      disposeCurrent: () => _debounceSearchController.dispose(),
+      create: DebounceController.new,
+      setInternal: (v) => _debounceSearchController = v,
+      setOwned: (v) => _ownsDebounceController = v,
+      onChanged: _rebuildDebounceCallback,
+    );
+  }
+
+  void _rebuildDebounceCallback() {
+    // Rebuild the debounce wrapper so it uses the (possibly new) controller.
+    _debounceSearchCallback = debounceFunction<List<T>?, String>(
+      _debounceSearchCallbackImpl,
+      controller: _debounceSearchController,
+    );
   }
 
   @override
@@ -277,4 +281,32 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
     }
     super.dispose();
   }
+}
+
+/// Swaps an internal resource for a new widget-provided one.
+///
+/// - If [newValue] equals [oldValue], no-op (early return).
+/// - If [wasOwned] is true, calls [disposeCurrent] to dispose the old
+///   internal instance.
+/// - Updates the ownership flag via [setOwned] to reflect the new
+///   widget value (owned iff `newValue == null`).
+/// - Stores the new resource (widget-provided or freshly created via
+///   [create]) via [setInternal].
+/// - If [onChanged] is provided, invokes it after the swap (used to
+///   rebuild the debounce wrapper when its controller changes).
+void _swapResource<T extends Object>({
+  required T? newValue,
+  required T? oldValue,
+  required bool Function() wasOwned,
+  required VoidCallback disposeCurrent,
+  required T Function() create,
+  required void Function(T) setInternal,
+  required void Function(bool) setOwned,
+  VoidCallback? onChanged,
+}) {
+  if (newValue == oldValue) return;
+  if (wasOwned()) disposeCurrent();
+  setOwned(newValue == null);
+  setInternal(newValue ?? create());
+  onChanged?.call();
 }
