@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:debounced_autocomplete/src/debouncer.dart';
 import 'package:debounced_autocomplete/debounced_autocomplete.dart';
 
 // Helper class for testing DebouncedAutocomplete
@@ -126,6 +125,40 @@ void main() {
       } catch (e) {
         expect(e, isA<DebounceCancelException>());
       }
+    });
+
+    test('current returns a fresh timer after cancel', () async {
+      final controller = DebounceController(
+        duration: const Duration(milliseconds: 100),
+      );
+      final t1 = controller.current;
+      controller.cancel();
+      // Consume the cancellation error on the old timer so the test
+      // framework doesn't flag it as an uncaught async error.
+      await t1.future.catchError((_) {});
+
+      final t2 = controller.current;
+      expect(
+        t2,
+        isNot(same(t1)),
+        reason:
+            'after cancel, current must yield a fresh timer — '
+            'otherwise debounceFunction silently swallows the next call',
+      );
+      expect(t2.isCompleted, isFalse);
+    });
+
+    test('current returns a fresh timer after dispose', () async {
+      final controller = DebounceController(
+        duration: const Duration(milliseconds: 100),
+      );
+      final t1 = controller.current;
+      controller.dispose();
+      await t1.future.catchError((_) {});
+
+      final t2 = controller.current;
+      expect(t2, isNot(same(t1)));
+      expect(t2.isCompleted, isFalse);
     });
   });
 
@@ -268,6 +301,34 @@ void main() {
       final result = await future;
 
       expect(result, null);
+    });
+
+    test('rethrows non-cancel exceptions', () async {
+      final controller = DebounceController(
+        duration: const Duration(milliseconds: 50),
+      );
+      final debounced = debounceFunction<String, String>(
+        (_) async => throw Exception('not a cancel'),
+        controller: controller,
+      );
+      await expectLater(
+        debounced('x'),
+        throwsA(isA<Exception>()),
+      );
+    });
+
+    test('rethrows Error subclasses', () async {
+      final controller = DebounceController(
+        duration: const Duration(milliseconds: 50),
+      );
+      final debounced = debounceFunction<String, String>(
+        (_) async => throw StateError('boom'),
+        controller: controller,
+      );
+      await expectLater(
+        debounced('x'),
+        throwsA(isA<StateError>()),
+      );
     });
   });
 
@@ -451,7 +512,23 @@ void main() {
         // Reset search counter
         searchCallCount = 0;
 
-        // Try to search again with the same selected text - this should NOT trigger search
+        // Try to search again with text matching the selected option's
+        // displayValue. We first clear the field so the listener fires —
+        // TextEditingController (ValueNotifier) skips notification when
+        // the value is unchanged, and the field is already "Apple" after
+        // selection (via displayStringForOption).
+        await tester.enterText(textField, '');
+        await tester.pump(const Duration(milliseconds: 150));
+        await tester.pumpAndSettle();
+        // The empty-text short-circuit in _debounceSearchCallbackImpl
+        // returns null without calling searchCallback, so searchCallCount
+        // remains 0 here.
+        searchCallCount = 0;
+
+        // Now type the matching text — the listener fires and
+        // continueSearchOnSelectedOption=false short-circuits in
+        // _optionsBuilderImpl (returns Iterable.empty() without invoking
+        // _debounceSearchCallback), so searchCallback is never called.
         await tester.enterText(textField, 'Apple');
         await tester.pump(const Duration(milliseconds: 150));
         await tester.pumpAndSettle();
@@ -552,7 +629,19 @@ void main() {
         // Reset search counter
         searchCallCount = 0;
 
-        // Try to search again with the same selected text - this SHOULD trigger search
+        // Try to search again with text matching the selected option's
+        // displayValue. We first clear the field so the listener fires —
+        // TextEditingController (ValueNotifier) skips notification when
+        // the value is unchanged, and the field is already "Apple" after
+        // selection (via displayStringForOption).
+        await tester.enterText(textField, '');
+        await tester.pump(const Duration(milliseconds: 150));
+        await tester.pumpAndSettle();
+        // The empty-text short-circuit in _debounceSearchCallbackImpl
+        // returns null without calling searchCallback, so searchCallCount
+        // remains 0 here. Reset again before the meaningful type.
+        searchCallCount = 0;
+
         await tester.enterText(textField, 'Apple');
         await tester.pump(const Duration(milliseconds: 150));
         await tester.pumpAndSettle();
@@ -790,6 +879,72 @@ void main() {
       expect(textField.controller, same(c2));
     });
 
+    testWidgets('reacts to new debounceController passed in a later rebuild', (
+      tester,
+    ) async {
+      final dc1 = DebounceController(
+        duration: const Duration(milliseconds: 50),
+      );
+      final dc2 = DebounceController(
+        duration: const Duration(milliseconds: 300),
+      );
+      addTearDown(() {
+        dc1.dispose();
+        dc2.dispose();
+      });
+
+      var searchCount = 0;
+      Future<List<TestOption>?> searchCallback(String input) async {
+        searchCount++;
+        return [TestOption('match-$input')];
+      }
+
+      Widget buildWidget(DebounceController dc) {
+        return MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              debounceController: dc,
+              searchCallback: searchCallback,
+              fieldViewBuilder: (ctx, c, fn, _, isLoading) =>
+                  TextField(controller: c, focusNode: fn),
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        );
+      }
+
+      // Pump 1: init with dc1 (50ms). dc1 should fire quickly.
+      await tester.pumpWidget(buildWidget(dc1));
+      await tester.enterText(find.byType(TextField), 'a');
+      await tester.pump(const Duration(milliseconds: 80));
+      await tester.pumpAndSettle();
+      expect(searchCount, 1, reason: 'dc1 (50ms) should fire by 80ms');
+
+      // Reset and rebuild with dc2 (300ms). didUpdateWidget must call
+      // _rebuildDebounceCallback so the wrapper uses dc2 from here on.
+      searchCount = 0;
+      await tester.pumpWidget(buildWidget(dc2));
+
+      await tester.enterText(find.byType(TextField), 'b');
+      // At 80ms, dc2 (300ms) must NOT have fired yet. Before the fix the
+      // wrapper would still hold dc1 and searchCount would be 1.
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(
+        searchCount,
+        0,
+        reason:
+            'dc2 (300ms) must still be debouncing at 80ms — '
+            'wrapper leaked the old dc1',
+      );
+
+      // Let dc2 finish.
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      expect(searchCount, 1, reason: 'dc2 (300ms) should fire by 380ms total');
+    });
+
     testWidgets('renders default TextField when fieldViewBuilder is not provided', (
       tester,
     ) async {
@@ -844,6 +999,170 @@ void main() {
         );
       },
     );
+
+    testWidgets('applies initialValue to the internal controller', (
+      tester,
+    ) async {
+      const initial = TextEditingValue(text: 'preset');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              initialValue: initial,
+              searchCallback: (_) async => null,
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(
+        textField.controller!.text,
+        'preset',
+        reason: 'initialValue should populate the internal controller',
+      );
+    });
+
+    testWidgets('initialValue does not override user-provided controller', (
+      tester,
+    ) async {
+      final userController = TextEditingController(text: 'mine');
+      addTearDown(userController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              controller: userController,
+              initialValue: const TextEditingValue(text: 'preset'),
+              searchCallback: (_) async => null,
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        userController.text,
+        'mine',
+        reason: 'user-provided controller must not be overwritten by initialValue',
+      );
+    });
+
+    testWidgets(
+      'writes displayValue into the field after option is selected',
+      (tester) async {
+        final options = [TestOption('Apple'), TestOption('Apricot')];
+        Future<List<TestOption>?> searchCallback(String input) async {
+          return options
+              .where((o) => o.value.toLowerCase().contains(input.toLowerCase()))
+              .toList();
+        }
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DebouncedAutocomplete<TestOption>(
+                searchCallback: searchCallback,
+                debounceController: DebounceController(
+                  duration: const Duration(milliseconds: 50),
+                ),
+                fieldViewBuilder:
+                    (ctx, controller, focusNode, _, isLoading) =>
+                        TextField(controller: controller, focusNode: focusNode),
+                optionsViewBuilder:
+                    (ctx, onSelected, options, selectedOption) =>
+                        Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 4,
+                    child: SizedBox(
+                      height: 200,
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: options.length,
+                        itemBuilder: (_, i) {
+                          final option = options.elementAt(i);
+                          return ListTile(
+                            key: ValueKey(option.value),
+                            title: Text(option.displayValue),
+                            onTap: () => onSelected(option),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.enterText(find.byType(TextField), 'App');
+        await tester.pump(const Duration(milliseconds: 80));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Apple'));
+        await tester.pumpAndSettle();
+
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        expect(
+          textField.controller!.text,
+          'Apple',
+          reason:
+              'after selection, field must show displayValue, not toString()',
+        );
+      },
+    );
+
+    testWidgets('logs and swallows optionsBuilder exceptions', (tester) async {
+      final logs = <String>[];
+      final original = debugPrint;
+      debugPrint = (msg, {wrapWidth}) => logs.add(msg.toString());
+      addTearDown(() => debugPrint = original);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DebouncedAutocomplete<TestOption>(
+              searchCallback: (_) async => null,
+              debounceController: DebounceController(
+                duration: const Duration(milliseconds: 50),
+              ),
+              optionsBuilder: (value, debounce) async {
+                throw Exception('optionsBuilder boom');
+              },
+              fieldViewBuilder:
+                  (ctx, controller, focusNode, _, isLoading) =>
+                      TextField(controller: controller, focusNode: focusNode),
+              optionsViewBuilder:
+                  (ctx, onSelected, options, selectedOption) =>
+                      const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+
+      await tester.enterText(find.byType(TextField), 'test');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      // No uncaught exception crashes the widget.
+      expect(tester.takeException(), isNull);
+      expect(
+        logs,
+        contains(predicate<String>((s) => s.contains('optionsBuilder boom'))),
+      );
+
+      // Restore inline so the framework's debugPrint override doesn't bleed.
+      debugPrint = original;
+    });
   });
 
   group('DebouncedAutocomplete - raw autocomplete interaction', () {

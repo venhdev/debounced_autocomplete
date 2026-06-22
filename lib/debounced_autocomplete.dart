@@ -4,9 +4,23 @@ import 'package:flutter/material.dart';
 
 import 'src/debouncer.dart';
 export 'src/debouncer.dart'
-    show Debounceable, DebounceController, debounceFunction;
+    show
+        Debounceable,
+        DebounceCancelException,
+        DebounceController,
+        debounceFunction,
+        DebounceTimer;
 
+/// Base type for values displayed by [DebouncedAutocomplete].
+///
+/// Implementers must provide a human-readable [displayValue] that is written
+/// into the underlying text field when an option is selected and is also
+/// matched against the field's text to suppress redundant searches after
+/// selection (unless [DebouncedAutocomplete.continueSearchOnSelectedOption]
+/// is set to `true`).
 abstract class DebAutocompleteValue extends Object {
+  /// The text shown for this option in the input field and in the options
+  /// list. Should be unique enough to identify the option from any other.
   String get displayValue;
 }
 
@@ -53,6 +67,18 @@ typedef DebAutocompleteFieldViewBuilder =
       bool isLoading,
     );
 
+/// A debounced autocomplete widget built on top of [RawAutocomplete].
+///
+/// Each change to the input text triggers a single [searchCallback] call
+/// after the user stops typing for the duration configured on
+/// [debounceController] (or the default 1s when one is not provided).
+/// Results are streamed through [optionsViewBuilder]; while a search is
+/// in flight, the widget renders a loading indicator (when using the
+/// default [fieldViewBuilder]).
+///
+/// The widget also accepts an [optionsBuilder] for callers that need to
+/// combine the debounced search with extra logic (e.g. minimum query
+/// length, multiple sources, or post-processing).
 class DebouncedAutocomplete<T extends DebAutocompleteValue>
     extends StatefulWidget {
   const DebouncedAutocomplete({
@@ -70,17 +96,59 @@ class DebouncedAutocomplete<T extends DebAutocompleteValue>
     this.continueSearchOnSelectedOption = false,
   });
 
+  /// Optional focus node. When `null` the widget creates and disposes its
+  /// own [FocusNode].
   final FocusNode? focusNode;
+
+  /// Optional text editing controller. When `null` the widget creates and
+  /// disposes its own [TextEditingController], which is initialized from
+  /// [initialValue] if one is provided.
   final TextEditingController? controller;
+
+  /// Optional debounce controller. When `null` the widget creates and
+  /// disposes its own [DebounceController] with the default 1s duration.
+  /// Reassigning this property on a later rebuild replaces the active
+  /// debounce wrapper (see [didUpdateWidget]).
   final DebounceController? debounceController;
+
+  /// Performs the actual search. Invoked via the debounce wrapper, so
+  /// only the most recent call within each debounce window will execute.
+  /// Exceptions thrown here are logged via `debugPrint` and swallowed so
+  /// they cannot break the field's input handling.
   final Future<List<T>?> Function(String input) searchCallback;
+
+  /// When `true`, typing text equal to the selected option's
+  /// [DebAutocompleteValue.displayValue] still triggers a search.
+  /// When `false` (the default), that case is short-circuited to an empty
+  /// options list to avoid redundant lookups.
   final bool continueSearchOnSelectedOption;
 
+  /// Builds the input widget (typically a [TextField]). Defaults to a
+  /// basic [TextField] with a circular progress suffix while loading.
   final DebAutocompleteFieldViewBuilder fieldViewBuilder;
+
+  /// Builds the popup that lists the options returned for the current
+  /// input. Must call [DebAutocompleteOptionsViewBuilder]'s
+  /// `onSelected` when the user picks an option.
   final DebAutocompleteOptionsViewBuilder<T> optionsViewBuilder;
+
+  /// Optional override for how the widget turns input text into options.
+  /// When provided, [searchCallback] is not invoked directly; instead the
+  /// wrapper is handed to this builder, which decides when (and whether)
+  /// to call it. Exceptions thrown here are logged via `debugPrint` and
+  /// the field falls back to an empty options list.
   final DebAutocompleteOptionsBuilder<T>? optionsBuilder;
+
+  /// Initial value applied to the internally created text editing
+  /// controller. Ignored when the caller provides their own [controller].
   final TextEditingValue? initialValue;
+
+  /// Called when the user selects an option from the options view.
+  /// If `null`, selection still updates the widget's internal selected
+  /// state (used to short-circuit redundant searches).
   final void Function(T)? onSelected;
+
+  /// Direction in which the options view opens relative to the field.
   final OptionsViewOpenDirection optionsViewOpenDirection;
 
   /// Default `fieldViewBuilder` used when the caller does not supply one.
@@ -162,6 +230,9 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
     _focusNode = _ownsFocusNode ? FocusNode() : widget.focusNode!;
     _textEditingController =
         _ownsTextEditingController ? TextEditingController() : widget.controller!;
+    if (_ownsTextEditingController && widget.initialValue != null) {
+      _textEditingController.value = widget.initialValue!;
+    }
     _debounceSearchController = _ownsDebounceController
         ? DebounceController()
         : widget.debounceController!;
@@ -181,16 +252,24 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
       return Iterable<T>.empty();
     }
 
-    // if optionsBuilder is provided, use it
-    if (widget.optionsBuilder != null) {
-      final options = await widget.optionsBuilder!(
-        textEditingValue,
-        _debounceSearchCallback,
+    try {
+      // if optionsBuilder is provided, use it
+      if (widget.optionsBuilder != null) {
+        final options = await widget.optionsBuilder!(
+          textEditingValue,
+          _debounceSearchCallback,
+        );
+        return options;
+      } else {
+        final options =
+            await _debounceSearchCallback.call(textEditingValue.text);
+        return options ?? Iterable<T>.empty();
+      }
+    } catch (error, stack) {
+      debugPrint(
+        '[ERR][DebouncedAutocomplete] optionsBuilder failed: $error\n$stack',
       );
-      return options;
-    } else {
-      final options = await _debounceSearchCallback.call(textEditingValue.text);
-      return options ?? Iterable<T>.empty();
+      return Iterable<T>.empty();
     }
   }
 
@@ -200,6 +279,7 @@ class _DebouncedAutocompleteState<T extends DebAutocompleteValue>
       focusNode: _focusNode,
       optionsViewOpenDirection: widget.optionsViewOpenDirection,
       textEditingController: _textEditingController,
+      displayStringForOption: (T option) => option.displayValue,
       onSelected: widget.onSelected != null
           ? (option) {
               setState(() => _selectedOption = option);

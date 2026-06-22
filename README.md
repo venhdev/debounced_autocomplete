@@ -10,6 +10,8 @@ A Flutter autocomplete widget with built-in debouncing to optimize API calls and
 - **Flexible UI**: Customize both the input field and options view
 - **Type Safe**: Strongly typed with generic support
 - **Easy Integration**: Simple API that works with any data source
+- **Pre-fillable**: Pass `initialValue` to seed the field on first build.
+- **Resilient**: Errors from `searchCallback` / `optionsBuilder` are caught so the field stays usable.
 
 ## Demo
 
@@ -140,6 +142,17 @@ DebouncedAutocomplete<City>(
 )
 ```
 
+### Pre-filling the field
+
+Pass `initialValue` to seed the internally-managed controller on first build. Ignored when you supply your own `controller`.
+
+```dart
+DebouncedAutocomplete<City>(
+  initialValue: const TextEditingValue(text: 'Hanoi'),
+  // ... other parameters
+)
+```
+
 ## API Reference
 
 ### DebAutocompleteValue & displayValue
@@ -166,6 +179,16 @@ The `displayValue` is used by `RawAutocomplete` internally to:
 - Display the selected value in the input field
 
 **Tip:** Format `displayValue` to be user-friendly as it appears in the text field after selection.
+
+### Exports
+
+The package re-exports the lower-level debounce primitives from `src/debouncer.dart` for callers who want to build their own debounced logic:
+
+- `DebounceController` — owns the debounce timer (`current`, `fresh`, `cancel`).
+- `debounceFunction<S, T>(fn, controller:)` — wraps any `FutureOr<S> Function(T)` with debounce semantics.
+- `Debounceable<S, T>` — the `FutureOr<S> Function(T)` typedef used by the wrapper.
+- `DebounceTimer` — the cancellable timer.
+- `DebounceCancelException` — surfaces when a pending call is cancelled by a newer call.
 
 ## Roadmap
 

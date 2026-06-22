@@ -5,18 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.1] - 2026-06-XX
+## [1.3.1] - 2026-06-22
 
 ### Fixed
-- **Resource leak (regression)**: Internal `TextEditingController`, `FocusNode`, and `DebounceController` are now reliably disposed even when the caller switches to user-provided ones via a widget rebuild after init. Previously `dispose()` consulted the final widget's null check, which falsely skipped the cleanup for any internally-created resource.
-- **Reactivity (Bug 1)**: Internal controllers and the debounce wrapper now update when the parent widget rebuilds with a new `focusNode`, `controller`, or `debounceController`. The class now overrides `didUpdateWidget`; previously these properties were read once in `initState` and ignored on subsequent rebuilds.
+- **Resource leak on rebuild**: when the parent swaps from internal to user-provided `controller`/`focusNode`/`debounceController` mid-life, the internal resource is now correctly disposed.
+- **Reactivity**: `focusNode`, `controller`, and `debounceController` are now re-read on every rebuild (was previously captured once in `initState`).
+- **Crashed without `fieldViewBuilder`**: the widget previously null-asserted the parameter at build time. It now defaults to a basic `TextField` with a loading indicator suffix.
+- **Field did not update after option selection**: `displayStringForOption` is now wired so the field shows the selected option's `displayValue`.
+- **`optionsBuilder` exceptions crashed the field**: now logged via `debugPrint` and swallowed (matching how `searchCallback` errors were already handled in 1.3.0).
+- **`DebounceController.cancel` left a dead timer**: next `.current` returned the cancelled instance. Now constructs a fresh timer.
+- **`debounceFunction` silently swallowed `Error` subclasses**: catch widened to rethrow non-cancel errors of any kind.
 
 ### Added
-- Default `fieldViewBuilder` returning a basic `TextField` with a small loading indicator. The widget is now usable without supplying `fieldViewBuilder` (it was previously declared optional but unconditionally null-asserted in `build`, which threw a `Null check operator` error at runtime if omitted).
-
-### Changed
-- `fieldViewBuilder` parameter is no longer nullable; it defaults to the new internal implementation. The `!` null-assert in `build` is removed.
-- `_focusNode` field is no longer nullable (it was always assigned a non-null value in `initState`).
+- `initialValue` parameter on `DebouncedAutocomplete` — pre-fills the internally-managed text controller.
+- `DebounceTimer` and `DebounceCancelException` exported from `debounced_autocomplete.dart`.
 
 ## [1.3.0] - 2026-06-11
 

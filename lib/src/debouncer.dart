@@ -1,7 +1,14 @@
 import 'dart:async' show FutureOr, Timer, Completer;
 
-typedef Debounceable<S extends Object?, T> = FutureOr<S> Function(T parameter);
+typedef Debounceable<S, T> = FutureOr<S> Function(T parameter);
 
+/// Returns a new function that is a debounced version of the given function.
+///
+/// The wrapped function is invoked only after no calls have been made for
+/// the controller's configured [Duration]; earlier pending calls are
+/// cancelled and resolve to `null` without invoking the wrapped function.
+/// Any error thrown by the wrapped function is rethrown to the caller of
+/// the debounced wrapper.
 Debounceable<S, T> debounceFunction<S, T>(
   Debounceable<S, T> function, {
   required DebounceController controller,
@@ -15,7 +22,7 @@ Debounceable<S, T> debounceFunction<S, T>(
     timer = controller.fresh;
     try {
       await timer!.future;
-    } on Exception catch (error) {
+    } catch (error) {
       if (error is DebounceCancelException) {
         return Future.value(null);
       }
@@ -32,14 +39,7 @@ class DebounceController {
   DebounceTimer? _innerTimer;
 
   /// Returns the current [DebounceTimer] instance.
-  DebounceTimer get current {
-    if (_innerTimer == null) {
-      _innerTimer = DebounceTimer(duration: duration);
-      return _innerTimer!;
-    } else {
-      return _innerTimer!;
-    }
-  }
+  DebounceTimer get current => _innerTimer ??= DebounceTimer(duration: duration);
 
   /// Returns a new [DebounceTimer] instance.
   DebounceTimer get fresh {
@@ -48,22 +48,25 @@ class DebounceController {
   }
 
   /// Cancels the current [DebounceTimer] instance.
-  void dispose() {
-    _innerTimer?.cancel();
-  }
+  void dispose() => cancel();
 
-  /// Cancels the current [DebounceTimer] instance.
+  /// Cancels the current [DebounceTimer] instance, if any.
+  ///
+  /// After [cancel], the next call to [current] lazily constructs a fresh
+  /// timer. Without this, callers would receive a dead [DebounceTimer]
+  /// whose [DebounceTimer.future] is already completed with a
+  /// [DebounceCancelException], silently swallowing the next wrapped call.
   void cancel() {
     _innerTimer?.cancel();
+    _innerTimer = null;
   }
 }
 
-/// Returns a new function that is a debounced version of the given function.
+/// A wrapper around [Timer] used for debouncing.
 ///
-/// This means that the original function will be called only after no calls
-/// have been made for the given Duration.
-
-// A wrapper around Timer used for debouncing.
+/// Exposes a [Future] that completes when the underlying timer fires,
+/// and a [cancel] method that completes the future with a
+/// [DebounceCancelException].
 class DebounceTimer {
   DebounceTimer({required Duration duration}) {
     _timer = Timer(duration, _onComplete);
@@ -81,14 +84,18 @@ class DebounceTimer {
   bool get isCompleted => _completer.isCompleted;
 
   void cancel() {
-    if (_timer.isActive) _timer.cancel();
+    // Order matters: cancel the underlying Timer first so its natural
+    // callback can't later call `_completer.complete()` on an
+    // already-error-completed future. `Timer.cancel` is a no-op on
+    // completed timers, so no `isActive` guard is needed.
+    _timer.cancel();
     if (!_completer.isCompleted) {
       _completer.completeError(const DebounceCancelException());
     }
   }
 }
 
-// An exception indicating that the timer was canceled.
+/// An exception indicating that the timer was canceled.
 class DebounceCancelException implements Exception {
   const DebounceCancelException();
 }
